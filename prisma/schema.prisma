@@ -1,0 +1,344 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ================================
+// Core User Management Models
+// ================================
+
+model User {
+  id               String   @id @default(cuid())
+  clerkId          String   @unique
+  email            String   @unique
+  firstName        String?
+  lastName         String?
+  imageUrl         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relationships
+  organizationMembers OrganizationMember[]
+  apiKeys             ApiKey[]
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+model Organization {
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
+  description      String?
+  imageUrl         String?
+  settings         Json     @default("{}")
+  polarCustomerId  String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relationships
+  members          OrganizationMember[]
+  subscriptions    Subscription[]
+  apiKeys          ApiKey[]
+  usageRecords     UsageRecord[]
+  monitors         Monitor[]
+  auditLogs        AuditLog[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String             @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrganizationRole   @default(MEMBER)
+  invitedAt      DateTime?
+  joinedAt       DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  // Relationships
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("organization_members")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ================================
+// Subscription & Billing Models
+// ================================
+
+model Subscription {
+  id                String            @id @default(cuid())
+  organizationId    String
+  polarId           String            @unique
+  status            SubscriptionStatus
+  planId            String
+  planName          String
+  priceAmount       Int               // Amount in cents
+  priceCurrency     String            @default("usd")
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean          @default(false)
+  trialStart        DateTime?
+  trialEnd          DateTime?
+  metadata          Json             @default("{}")
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relationships
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  usageRecords      UsageRecord[]
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  PAST_DUE
+  TRIALING
+  UNPAID
+  PAUSED
+}
+
+model UsageRecord {
+  id               String       @id @default(cuid())
+  organizationId   String
+  subscriptionId   String?
+  metricName       String
+  quantity         Int
+  timestamp        DateTime
+  metadata         Json         @default("{}")
+  createdAt        DateTime     @default(now())
+
+  // Relationships
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, metricName, timestamp])
+  @@index([timestamp])
+  @@map("usage_records")
+}
+
+// ================================
+// API Management Models
+// ================================
+
+model ApiKey {
+  id               String       @id @default(cuid())
+  organizationId   String
+  userId           String
+  name             String
+  keyHash          String       @unique
+  prefix           String
+  permissions      Json         @default("[]")
+  rateLimit        Int          @default(1000)
+  rateLimitWindow  Int          @default(3600) // seconds
+  lastUsedAt       DateTime?
+  expiresAt        DateTime?
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relationships
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([keyHash])
+  @@map("api_keys")
+}
+
+// ================================
+// Demo Application Models (API Monitoring)
+// ================================
+
+model Monitor {
+  id               String       @id @default(cuid())
+  organizationId   String
+  name             String
+  url              String
+  method           String       @default("GET")
+  headers          Json         @default("{}")
+  body             String?
+  expectedStatus   Int          @default(200)
+  timeout          Int          @default(30)
+  interval         Int          @default(300) // seconds
+  isActive         Boolean      @default(true)
+  regions          String[]     @default(["us-east-1"])
+  retryCount       Int          @default(3)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relationships
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  checks           MonitorCheck[]
+  incidents        Incident[]
+
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("monitors")
+}
+
+model MonitorCheck {
+  id               String       @id @default(cuid())
+  monitorId        String
+  status           CheckStatus
+  responseTime     Int?         // milliseconds
+  statusCode       Int?
+  errorMessage     String?
+  region           String       @default("us-east-1")
+  checkedAt        DateTime     @default(now())
+
+  // Relationships
+  monitor          Monitor      @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, checkedAt])
+  @@index([status, checkedAt])
+  @@map("monitor_checks")
+}
+
+enum CheckStatus {
+  UP
+  DOWN
+  TIMEOUT
+  ERROR
+  DEGRADED
+}
+
+model Incident {
+  id               String         @id @default(cuid())
+  monitorId        String
+  title            String
+  description      String?
+  status           IncidentStatus @default(OPEN)
+  severity         IncidentSeverity @default(MEDIUM)
+  startedAt        DateTime       @default(now())
+  resolvedAt       DateTime?
+  acknowledgedAt   DateTime?
+  metadata         Json           @default("{}")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  // Relationships
+  monitor          Monitor        @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, status])
+  @@index([status, startedAt])
+  @@map("incidents")
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+  CLOSED
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ================================
+// Audit & Security Models
+// ================================
+
+model AuditLog {
+  id               String       @id @default(cuid())
+  organizationId   String
+  userId           String?
+  action           String
+  resourceType     String
+  resourceId       String?
+  metadata         Json         @default("{}")
+  ipAddress        String?
+  userAgent        String?
+  timestamp        DateTime     @default(now())
+  createdAt        DateTime     @default(now())
+
+  // Relationships
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, timestamp])
+  @@index([action, timestamp])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+// ================================
+// Notification & Communication Models
+// ================================
+
+model NotificationPreference {
+  id               String                 @id @default(cuid())
+  userId           String
+  organizationId   String
+  type             NotificationType
+  channel          NotificationChannel
+  enabled          Boolean                @default(true)
+  settings         Json                   @default("{}")
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@unique([userId, organizationId, type, channel])
+  @@map("notification_preferences")
+}
+
+enum NotificationType {
+  INCIDENT_CREATED
+  INCIDENT_RESOLVED
+  MONITOR_DOWN
+  MONITOR_UP
+  QUOTA_EXCEEDED
+  PAYMENT_FAILED
+  PAYMENT_SUCCEEDED
+  TEAM_MEMBER_JOINED
+  API_KEY_CREATED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SLACK
+  WEBHOOK
+  SMS
+  IN_APP
+}
+
+model EmailTemplate {
+  id               String       @id @default(cuid())
+  name             String       @unique
+  subject          String
+  htmlContent      String
+  textContent      String?
+  variables        Json         @default("[]")
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@map("email_templates")
+}

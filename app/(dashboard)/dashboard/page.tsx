@@ -1,6 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { getCurrentUser, getCurrentOrganization } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   Card,
@@ -31,15 +30,22 @@ export default async function DashboardPage() {
   if (!userId) redirect("/sign-in");
   if (!orgId) redirect("/onboarding");
 
-  // Get current user and organization
-  const [user, organization] = await Promise.all([
-    getCurrentUser(),
-    getCurrentOrganization(),
-  ]);
+  // Get organization details
+  const organization = await db.organization.findUnique({
+    where: { id: orgId },
+    include: {
+      members: {
+        where: { userId },
+        select: { role: true },
+      },
+    },
+  });
 
   if (!organization) {
     redirect("/onboarding");
   }
+
+  const userRole = organization.members[0]?.role;
 
   // Get organization statistics
   const [stats, recentActivity] = await Promise.all([
@@ -51,9 +57,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-foreground">
-          Welcome back, {user?.firstName || "User"}! 👋
-        </h1>
+        <h1 className="text-3xl font-bold text-foreground">Welcome back! 👋</h1>
         <p className="text-muted-foreground">
           Here&apos;s what&apos;s happening with {organization.name} today.
         </p>
@@ -69,9 +73,9 @@ export default async function DashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.members}</div>
             <p className="text-xs text-muted-foreground">
-              {organization.role === "OWNER"
+              {userRole === "OWNER"
                 ? "You have full access"
-                : `You are ${organization.role.toLowerCase()}`}
+                : `You are ${userRole?.toLowerCase() || "member"}`}
             </p>
           </CardContent>
         </Card>
@@ -165,7 +169,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {organization.role === "OWNER" && (
+              {userRole === "OWNER" && (
                 <>
                   <QuickActionButton
                     href="/dashboard/team"
@@ -182,7 +186,7 @@ export default async function DashboardPage() {
                 </>
               )}
 
-              {["OWNER", "ADMIN", "MEMBER"].includes(organization.role) && (
+              {userRole && ["OWNER", "ADMIN", "MEMBER"].includes(userRole) && (
                 <QuickActionButton
                   href="/dashboard/monitors"
                   icon={<Monitor className="h-4 w-4" />}
@@ -253,7 +257,12 @@ async function getOrganizationStats(organizationId: string) {
     // API key stats
     Promise.all([
       db.apiKey.count({ where: { organizationId } }),
-      db.apiKey.count({ where: { organizationId, isActive: true } }),
+      db.apiKey.count({
+        where: {
+          organizationId,
+          expiresAt: { gte: new Date() },
+        },
+      }),
     ]),
 
     // Monitor stats

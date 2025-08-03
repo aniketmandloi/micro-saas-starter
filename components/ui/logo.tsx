@@ -17,7 +17,9 @@ export function Logo({ className, showText = true }: LogoProps) {
       {showText && (
         <div className="flex flex-col">
           <span className="text-lg font-bold leading-none">SaaS Starter</span>
-          <span className="text-xs text-muted-foreground leading-none">Monitor & Scale</span>
+          <span className="text-xs text-muted-foreground leading-none">
+            Monitor & Scale
+          </span>
         </div>
       )}
     </div>

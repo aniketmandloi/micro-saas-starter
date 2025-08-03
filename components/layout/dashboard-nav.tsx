@@ -28,7 +28,7 @@ export function DashboardNav({ user, organization }: DashboardNavProps) {
   const hasPermission = (permission: string) => {
     if (!organization?.role) return false;
     const rolePermissions = ROLE_PERMISSIONS[organization.role];
-    return rolePermissions.includes(permission as any);
+    return rolePermissions.includes(permission as never);
   };
 
   const navigation = [
